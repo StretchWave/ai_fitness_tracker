@@ -1,4 +1,5 @@
 import 'package:ai_fitness_tracker/Screens/Home.dart';
+import 'package:ai_fitness_tracker/Screens/WorkoutScreen.dart';
 import 'package:flutter/material.dart';
 
 void main() {
@@ -12,7 +13,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: HomeScreen(),
+      home: WorkoutScreen(),
     );
   }
 }
