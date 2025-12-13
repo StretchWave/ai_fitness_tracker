@@ -1,5 +1,5 @@
 //import 'package:ai_fitness_tracker/Screens/Home.dart';
-import 'package:ai_fitness_tracker/Screens/WorkoutScreen.dart';
+import 'package:ai_fitness_tracker/screens/workout_screen.dart';
 import 'package:flutter/material.dart';
 
 void main() {

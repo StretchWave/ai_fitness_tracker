@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:ai_fitness_tracker/utils/pose_painter.dart';
 import 'package:ai_fitness_tracker/services/pose_detection_service.dart';
+import 'package:ai_fitness_tracker/utils/push_up_counter.dart';
+import 'package:ai_fitness_tracker/widgets/workout_stats_overlay.dart';
 // commons types are exported by google_mlkit_pose_detection; no direct alias needed
 
 class WorkoutScreen extends StatefulWidget {
@@ -19,9 +21,15 @@ class _WorkoutScreenState extends State<WorkoutScreen>
   CameraController? _controller;
   // Use the service instead of local detector
   final PoseDetectionService _poseDetectionService = PoseDetectionService();
+  final PushUpCounter _pushUpCounter = PushUpCounter();
+
   bool _isDetecting = false;
   List<Pose> _poses = [];
   Size? _imageSize;
+  int _reps = 0;
+  String _status = "Start";
+  String _accuracy = "0%";
+  CameraLensDirection _cameraLensDirection = CameraLensDirection.front;
 
   @override
   void initState() {
@@ -41,9 +49,9 @@ class _WorkoutScreenState extends State<WorkoutScreen>
 
   Future<void> _initialize() async {
     final cameras = await availableCameras();
-    // Prefer back camera for body tracking; fall back to first available.
+    // Prefer front camera initially; fall back to first available.
     CameraDescription selected = cameras.firstWhere(
-      (c) => c.lensDirection == CameraLensDirection.back,
+      (c) => c.lensDirection == _cameraLensDirection,
       orElse: () =>
           cameras.isNotEmpty ? cameras.first : throw 'No camera available',
     );
@@ -63,11 +71,27 @@ class _WorkoutScreenState extends State<WorkoutScreen>
     if (mounted) setState(() {});
   }
 
+  Future<void> _toggleCamera() async {
+    // We don't check _isDetecting because we want to force the switch.
+    // The controller stop/dispose will handle the stream.
+
+    await _stop();
+
+    setState(() {
+      _cameraLensDirection = _cameraLensDirection == CameraLensDirection.back
+          ? CameraLensDirection.front
+          : CameraLensDirection.back;
+    });
+
+    _initialize();
+  }
+
   Future<void> _stop() async {
     try {
       await _controller?.stopImageStream();
     } catch (_) {}
     await _controller?.dispose();
+    _controller = null;
   }
 
   Future<void> _processCameraImage(CameraImage image) async {
@@ -79,7 +103,18 @@ class _WorkoutScreenState extends State<WorkoutScreen>
         _controller!.description,
       );
 
+      // Counter Logic
+      if (poses.isNotEmpty) {
+        final pose = poses.first;
+        _reps = _pushUpCounter.checkPushUp(pose);
+        _status = _pushUpCounter.status;
+        _accuracy = _pushUpCounter.lastRepAccuracy;
+      }
+
       if (mounted) {
+        // Avoid unnecessary rebuilds if nothing changed (e.g. no pose -> no pose)
+        if (poses.isEmpty && _poses.isEmpty) return;
+
         setState(() {
           _poses = poses;
           _imageSize = Size(image.width.toDouble(), image.height.toDouble());
@@ -99,7 +134,15 @@ class _WorkoutScreenState extends State<WorkoutScreen>
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Workout - Pose Tracking')),
+      appBar: AppBar(
+        title: const Text('Workout - Pose Tracking'),
+        actions: [
+          IconButton(
+            onPressed: _toggleCamera,
+            icon: const Icon(Icons.switch_camera),
+          ),
+        ],
+      ),
       body: Stack(
         fit: StackFit.expand,
         children: [
@@ -120,6 +163,12 @@ class _WorkoutScreenState extends State<WorkoutScreen>
                   ),
                 ),
             ],
+          ),
+          // Rep Counter Overlay
+          WorkoutStatsOverlay(
+            reps: _reps,
+            status: _status,
+            accuracy: _accuracy,
           ),
         ],
       ),

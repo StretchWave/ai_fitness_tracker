@@ -31,8 +31,17 @@ class PosePainter extends CustomPainter {
       ..strokeWidth = 2.0;
 
     for (final pose in poses) {
-      // Draw all 33 landmarks as red dots
+      // Draw all 33 landmarks
       for (final landmark in pose.landmarks.values) {
+        // Color code based on confidence
+        // If low confidence (<= 60%), show yellow to indicate prediction/uncertainty
+        // Otherwise show red (certain)
+        if (landmark.likelihood <= 0.6) {
+          landmarkPaint.color = Colors.yellow;
+        } else {
+          landmarkPaint.color = Colors.red;
+        }
+
         final x = _translateX(
           landmark.x,
           size,
