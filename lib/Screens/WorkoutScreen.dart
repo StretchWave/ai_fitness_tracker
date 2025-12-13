@@ -1,96 +1,229 @@
-import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
-import 'package:camera/camera.dart';
-import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 
-import '../services/pose_service.dart';
-import '../painters/pose_painter.dart';
+import 'dart:async';
+import 'dart:typed_data';
+
+import 'package:camera/camera.dart';
+import 'package:flutter/material.dart';
+import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
+import 'package:google_mlkit_commons/google_mlkit_commons.dart';
+// commons types are exported by google_mlkit_pose_detection; no direct alias needed
 
 class WorkoutScreen extends StatefulWidget {
+  const WorkoutScreen({super.key});
+
   @override
-  _WorkoutScreenState createState() => _WorkoutScreenState();
+  State<WorkoutScreen> createState() => _WorkoutScreenState();
 }
 
-class _WorkoutScreenState extends State<WorkoutScreen> {
-  CameraController? _cameraController;
-  PoseService poseService = PoseService();
-  Map<PoseLandmarkType, PoseLandmark>? _currentLandmarks;
+class _WorkoutScreenState extends State<WorkoutScreen> with WidgetsBindingObserver {
+  CameraController? _controller;
+  PoseDetector? _poseDetector;
+  bool _isDetecting = false;
+  List<Pose> _poses = [];
+  Size? _imageSize;
 
   @override
   void initState() {
     super.initState();
-    initCamera();
+    WidgetsBinding.instance.addObserver(this);
+    _initialize();
   }
 
   @override
   void dispose() {
-    _cameraController?.dispose();
-    poseService.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    _stop();
     super.dispose();
   }
 
-  Future<void> initCamera() async {
+  Future<void> _initialize() async {
     final cameras = await availableCameras();
-    final camera = cameras.first;
-
-    _cameraController = CameraController(
-      camera,
-      ResolutionPreset.medium,
-      enableAudio: false,
+    // Prefer back camera for body tracking; fall back to first available.
+    CameraDescription selected = cameras.firstWhere(
+      (c) => c.lensDirection == CameraLensDirection.back,
+      orElse: () => cameras.isNotEmpty ? cameras.first : throw 'No camera available',
     );
 
-    await _cameraController!.initialize();
+    _controller = CameraController(
+      selected,
+      ResolutionPreset.high,
+      enableAudio: false,
+      imageFormatGroup: ImageFormatGroup.yuv420,
+    );
 
-    _cameraController!.startImageStream((CameraImage image) async {
-final WriteBuffer buffer = WriteBuffer();
-for (Plane plane in image.planes) {
-  buffer.putUint8List(plane.bytes);
-}
-final bytes = buffer.done().buffer.asUint8List();
+    await _controller!.initialize();
 
-final inputImage = InputImage.fromBytes(
-  bytes: bytes,
-  metadata: InputImageMetadata(
-    size: Size(image.width.toDouble(), image.height.toDouble()),
-    rotation: InputImageRotation.rotation0deg,
-    format: InputImageFormat.yuv420, // FIXED
-    bytesPerRow: image.planes[0].bytesPerRow,
-  ),
-);
+    _poseDetector = PoseDetector(
+      options: PoseDetectorOptions(mode: PoseDetectionMode.stream),
+    );
 
-final poses = await poseService.processFrame(inputImage);
+    // start image stream
+    await _controller!.startImageStream(_processCameraImage);
 
+    if (mounted) setState(() {});
+  }
 
-      if (poses.isNotEmpty) {
-        final pose = poses.first;
+  Future<void> _stop() async {
+    try {
+      await _controller?.stopImageStream();
+    } catch (_) {}
+    await _controller?.dispose();
+    await _poseDetector?.close();
+  }
 
+  InputImageRotation _rotationIntToImageRotation(int rotation) {
+    switch (rotation) {
+      case 90:
+        return InputImageRotation.rotation90deg;
+      case 180:
+        return InputImageRotation.rotation180deg;
+      case 270:
+        return InputImageRotation.rotation270deg;
+      case 0:
+      default:
+        return InputImageRotation.rotation0deg;
+    }
+  }
+
+  Future<void> _processCameraImage(CameraImage image) async {
+    if (_isDetecting) return;
+    _isDetecting = true;
+    try {
+      // Concatenate planes' bytes into a single buffer
+      final totalLength = image.planes.fold<int>(0, (sum, p) => sum + p.bytes.length);
+      final bytes = Uint8List(totalLength);
+      int offset = 0;
+      for (final plane in image.planes) {
+        bytes.setRange(offset, offset + plane.bytes.length, plane.bytes);
+        offset += plane.bytes.length;
+      }
+
+      final imageRotation = _rotationIntToImageRotation(_controller!.description.sensorOrientation);
+
+      final inputImageFormat = InputImageFormatValue.fromRawValue(image.format.raw) ?? InputImageFormat.nv21;
+
+      // The google_mlkit_commons version used here expects a single
+      // InputImageMetadata (not a list of plane metadata). Use the first
+      // plane's bytesPerRow as the row stride.
+      final metadata = InputImageMetadata(
+        size: Size(image.width.toDouble(), image.height.toDouble()),
+        rotation: imageRotation,
+        format: inputImageFormat,
+        bytesPerRow: image.planes.isNotEmpty ? image.planes[0].bytesPerRow : 0,
+      );
+
+      final inputImage = InputImage.fromBytes(bytes: bytes, metadata: metadata);
+
+      final poses = await _poseDetector!.processImage(inputImage);
+
+      if (mounted) {
         setState(() {
-          _currentLandmarks = pose.landmarks;
+          _poses = poses;
+          _imageSize = Size(image.width.toDouble(), image.height.toDouble());
         });
       }
-    });
-
-    setState(() {});
+    } catch (e) {
+      // ignore errors for now
+    } finally {
+      _isDetecting = false;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_cameraController == null || !_cameraController!.value.isInitialized) {
-      return const Center(child: CircularProgressIndicator());
+    if (_controller == null || !_controller!.value.isInitialized) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
     }
 
     return Scaffold(
+      appBar: AppBar(title: const Text('Workout - Pose Tracking')),
       body: Stack(
+        fit: StackFit.expand,
         children: [
-          CameraPreview(_cameraController!),
-
-          if (_currentLandmarks != null)
-            CustomPaint(
-              painter: PosePainter(_currentLandmarks!),
-              child: Container(),
-            ),
+          // Camera preview filling entire screen
+          Stack(
+            fit: StackFit.expand,
+            children: [
+              // Camera preview
+              CameraPreview(_controller!),
+              // Pose landmarks overlay on top of camera
+              if (_imageSize != null)
+                CustomPaint(
+                  painter: PosePainter(poses: _poses, imageSize: _imageSize!),
+                ),
+            ],
+          ),
         ],
       ),
     );
+  }
+}
+
+class PosePainter extends CustomPainter {
+  final List<Pose> poses;
+  final Size imageSize;
+
+  PosePainter({required this.poses, required this.imageSize});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Red dots for all landmarks
+    final landmarkPaint = Paint()
+      ..color = Colors.red
+      ..style = PaintingStyle.fill;
+
+    // Lines connecting joints
+    final linePaint = Paint()
+      ..color = Colors.red.withValues(alpha: 0.5)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0;
+
+    final scaleX = size.width / imageSize.width;
+    final scaleY = size.height / imageSize.height;
+
+    for (final pose in poses) {
+      // Draw all 33 landmarks as red dots
+      for (final landmark in pose.landmarks.values) {
+        final x = landmark.x * scaleX;
+        final y = landmark.y * scaleY;
+        canvas.drawCircle(Offset(x, y), 5.0, landmarkPaint);
+      }
+
+      // Draw skeleton lines connecting key joints
+      void drawLineIfExists(PoseLandmarkType a, PoseLandmarkType b) {
+        final A = pose.landmarks[a];
+        final B = pose.landmarks[b];
+        if (A != null && B != null) {
+          canvas.drawLine(
+            Offset(A.x * scaleX, A.y * scaleY),
+            Offset(B.x * scaleX, B.y * scaleY),
+            linePaint,
+          );
+        }
+      }
+
+      // Arms
+      drawLineIfExists(PoseLandmarkType.leftShoulder, PoseLandmarkType.leftElbow);
+      drawLineIfExists(PoseLandmarkType.leftElbow, PoseLandmarkType.leftWrist);
+      drawLineIfExists(PoseLandmarkType.rightShoulder, PoseLandmarkType.rightElbow);
+      drawLineIfExists(PoseLandmarkType.rightElbow, PoseLandmarkType.rightWrist);
+      // Torso
+      drawLineIfExists(PoseLandmarkType.leftShoulder, PoseLandmarkType.rightShoulder);
+      drawLineIfExists(PoseLandmarkType.leftShoulder, PoseLandmarkType.leftHip);
+      drawLineIfExists(PoseLandmarkType.rightShoulder, PoseLandmarkType.rightHip);
+      drawLineIfExists(PoseLandmarkType.leftHip, PoseLandmarkType.rightHip);
+      // Legs
+      drawLineIfExists(PoseLandmarkType.leftHip, PoseLandmarkType.leftKnee);
+      drawLineIfExists(PoseLandmarkType.leftKnee, PoseLandmarkType.leftAnkle);
+      drawLineIfExists(PoseLandmarkType.rightHip, PoseLandmarkType.rightKnee);
+      drawLineIfExists(PoseLandmarkType.rightKnee, PoseLandmarkType.rightAnkle);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant PosePainter oldDelegate) {
+    return oldDelegate.poses != poses || oldDelegate.imageSize != imageSize;
   }
 }
