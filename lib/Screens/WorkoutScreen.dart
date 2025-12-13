@@ -1,4 +1,3 @@
-
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -7,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:google_mlkit_commons/google_mlkit_commons.dart';
 // commons types are exported by google_mlkit_pose_detection; no direct alias needed
+import 'dart:io';
 
 class WorkoutScreen extends StatefulWidget {
   const WorkoutScreen({super.key});
@@ -15,7 +15,8 @@ class WorkoutScreen extends StatefulWidget {
   State<WorkoutScreen> createState() => _WorkoutScreenState();
 }
 
-class _WorkoutScreenState extends State<WorkoutScreen> with WidgetsBindingObserver {
+class _WorkoutScreenState extends State<WorkoutScreen>
+    with WidgetsBindingObserver {
   CameraController? _controller;
   PoseDetector? _poseDetector;
   bool _isDetecting = false;
@@ -41,7 +42,8 @@ class _WorkoutScreenState extends State<WorkoutScreen> with WidgetsBindingObserv
     // Prefer back camera for body tracking; fall back to first available.
     CameraDescription selected = cameras.firstWhere(
       (c) => c.lensDirection == CameraLensDirection.back,
-      orElse: () => cameras.isNotEmpty ? cameras.first : throw 'No camera available',
+      orElse: () =>
+          cameras.isNotEmpty ? cameras.first : throw 'No camera available',
     );
 
     _controller = CameraController(
@@ -90,7 +92,10 @@ class _WorkoutScreenState extends State<WorkoutScreen> with WidgetsBindingObserv
     _isDetecting = true;
     try {
       // Concatenate planes' bytes into a single buffer
-      final totalLength = image.planes.fold<int>(0, (sum, p) => sum + p.bytes.length);
+      final totalLength = image.planes.fold<int>(
+        0,
+        (sum, p) => sum + p.bytes.length,
+      );
       final bytes = Uint8List(totalLength);
       int offset = 0;
       for (final plane in image.planes) {
@@ -98,9 +103,13 @@ class _WorkoutScreenState extends State<WorkoutScreen> with WidgetsBindingObserv
         offset += plane.bytes.length;
       }
 
-      final imageRotation = _rotationIntToImageRotation(_controller!.description.sensorOrientation);
+      final imageRotation = _rotationIntToImageRotation(
+        _controller!.description.sensorOrientation,
+      );
 
-      final inputImageFormat = InputImageFormatValue.fromRawValue(image.format.raw) ?? InputImageFormat.nv21;
+      final inputImageFormat =
+          InputImageFormatValue.fromRawValue(image.format.raw) ??
+          InputImageFormat.nv21;
 
       // The google_mlkit_commons version used here expects a single
       // InputImageMetadata (not a list of plane metadata). Use the first
@@ -132,9 +141,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> with WidgetsBindingObserv
   @override
   Widget build(BuildContext context) {
     if (_controller == null || !_controller!.value.isInitialized) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     return Scaffold(
@@ -151,7 +158,12 @@ class _WorkoutScreenState extends State<WorkoutScreen> with WidgetsBindingObserv
               // Pose landmarks overlay on top of camera
               if (_imageSize != null)
                 CustomPaint(
-                  painter: PosePainter(poses: _poses, imageSize: _imageSize!),
+                  painter: PosePainter(
+                    poses: _poses,
+                    imageSize: _imageSize!,
+                    rotation: _controller!.description.sensorOrientation,
+                    cameraLensDirection: _controller!.description.lensDirection,
+                  ),
                 ),
             ],
           ),
@@ -164,8 +176,15 @@ class _WorkoutScreenState extends State<WorkoutScreen> with WidgetsBindingObserv
 class PosePainter extends CustomPainter {
   final List<Pose> poses;
   final Size imageSize;
+  final int rotation;
+  final CameraLensDirection cameraLensDirection;
 
-  PosePainter({required this.poses, required this.imageSize});
+  PosePainter({
+    required this.poses,
+    required this.imageSize,
+    required this.rotation,
+    required this.cameraLensDirection,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -176,18 +195,27 @@ class PosePainter extends CustomPainter {
 
     // Lines connecting joints
     final linePaint = Paint()
-      ..color = Colors.red.withValues(alpha: 0.5)
+      ..color = Colors.red.withOpacity(0.5)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.0;
-
-    final scaleX = size.width / imageSize.width;
-    final scaleY = size.height / imageSize.height;
 
     for (final pose in poses) {
       // Draw all 33 landmarks as red dots
       for (final landmark in pose.landmarks.values) {
-        final x = landmark.x * scaleX;
-        final y = landmark.y * scaleY;
+        final x = _translateX(
+          landmark.x,
+          size,
+          imageSize,
+          rotation,
+          cameraLensDirection,
+        );
+        final y = _translateY(
+          landmark.y,
+          size,
+          imageSize,
+          rotation,
+          cameraLensDirection,
+        );
         canvas.drawCircle(Offset(x, y), 5.0, landmarkPaint);
       }
 
@@ -196,23 +224,67 @@ class PosePainter extends CustomPainter {
         final A = pose.landmarks[a];
         final B = pose.landmarks[b];
         if (A != null && B != null) {
+          final startX = _translateX(
+            A.x,
+            size,
+            imageSize,
+            rotation,
+            cameraLensDirection,
+          );
+          final startY = _translateY(
+            A.y,
+            size,
+            imageSize,
+            rotation,
+            cameraLensDirection,
+          );
+          final endX = _translateX(
+            B.x,
+            size,
+            imageSize,
+            rotation,
+            cameraLensDirection,
+          );
+          final endY = _translateY(
+            B.y,
+            size,
+            imageSize,
+            rotation,
+            cameraLensDirection,
+          );
+
           canvas.drawLine(
-            Offset(A.x * scaleX, A.y * scaleY),
-            Offset(B.x * scaleX, B.y * scaleY),
+            Offset(startX, startY),
+            Offset(endX, endY),
             linePaint,
           );
         }
       }
 
       // Arms
-      drawLineIfExists(PoseLandmarkType.leftShoulder, PoseLandmarkType.leftElbow);
+      drawLineIfExists(
+        PoseLandmarkType.leftShoulder,
+        PoseLandmarkType.leftElbow,
+      );
       drawLineIfExists(PoseLandmarkType.leftElbow, PoseLandmarkType.leftWrist);
-      drawLineIfExists(PoseLandmarkType.rightShoulder, PoseLandmarkType.rightElbow);
-      drawLineIfExists(PoseLandmarkType.rightElbow, PoseLandmarkType.rightWrist);
+      drawLineIfExists(
+        PoseLandmarkType.rightShoulder,
+        PoseLandmarkType.rightElbow,
+      );
+      drawLineIfExists(
+        PoseLandmarkType.rightElbow,
+        PoseLandmarkType.rightWrist,
+      );
       // Torso
-      drawLineIfExists(PoseLandmarkType.leftShoulder, PoseLandmarkType.rightShoulder);
+      drawLineIfExists(
+        PoseLandmarkType.leftShoulder,
+        PoseLandmarkType.rightShoulder,
+      );
       drawLineIfExists(PoseLandmarkType.leftShoulder, PoseLandmarkType.leftHip);
-      drawLineIfExists(PoseLandmarkType.rightShoulder, PoseLandmarkType.rightHip);
+      drawLineIfExists(
+        PoseLandmarkType.rightShoulder,
+        PoseLandmarkType.rightHip,
+      );
       drawLineIfExists(PoseLandmarkType.leftHip, PoseLandmarkType.rightHip);
       // Legs
       drawLineIfExists(PoseLandmarkType.leftHip, PoseLandmarkType.leftKnee);
@@ -222,8 +294,57 @@ class PosePainter extends CustomPainter {
     }
   }
 
+  double _translateX(
+    double x,
+    Size canvasSize,
+    Size imageSize,
+    int rotation,
+    CameraLensDirection cameraLensDirection,
+  ) {
+    switch (rotation) {
+      case 90:
+        return x *
+            canvasSize.width /
+            (Platform.isIOS ? imageSize.width : imageSize.height);
+      case 270:
+        return canvasSize.width -
+            x *
+                canvasSize.width /
+                (Platform.isIOS ? imageSize.width : imageSize.height);
+      case 0:
+      case 180:
+        return x * canvasSize.width / imageSize.width;
+      default:
+        return x * canvasSize.width / imageSize.width;
+    }
+  }
+
+  double _translateY(
+    double y,
+    Size canvasSize,
+    Size imageSize,
+    int rotation,
+    CameraLensDirection cameraLensDirection,
+  ) {
+    switch (rotation) {
+      case 90:
+      case 270:
+        return y *
+            canvasSize.height /
+            (Platform.isIOS ? imageSize.height : imageSize.width);
+      case 0:
+      case 180:
+        return y * canvasSize.height / imageSize.height;
+      default:
+        return y * canvasSize.height / imageSize.height;
+    }
+  }
+
   @override
   bool shouldRepaint(covariant PosePainter oldDelegate) {
-    return oldDelegate.poses != poses || oldDelegate.imageSize != imageSize;
+    return oldDelegate.poses != poses ||
+        oldDelegate.imageSize != imageSize ||
+        oldDelegate.rotation != rotation ||
+        oldDelegate.cameraLensDirection != cameraLensDirection;
   }
 }
