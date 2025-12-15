@@ -7,16 +7,20 @@ class PoseBridge {
   Stream<List<Map<String, double>>> get poseStream {
     return _channel.receiveBroadcastStream().map((event) {
       try {
-        final List<dynamic> list = event;
-        // ignore: avoid_print
-        print("Flutter Bridge: Received ${list.length} landmarks");
+        final List<dynamic> flatList = event;
+        // Optimization: received flat list [x, y, z, v, x, y, z, v...]
 
-        final mapped = list.map((e) {
-          final Map<dynamic, dynamic> map = e;
-          return map.map(
-            (key, value) => MapEntry(key.toString(), (value as num).toDouble()),
-          );
-        }).toList();
+        final int pointCount = flatList.length ~/ 4;
+        final List<Map<String, double>> mapped = [];
+
+        for (int i = 0; i < pointCount; i++) {
+          mapped.add({
+            'x': (flatList[i * 4] as num).toDouble(),
+            'y': (flatList[i * 4 + 1] as num).toDouble(),
+            'z': (flatList[i * 4 + 2] as num).toDouble(),
+            'visibility': (flatList[i * 4 + 3] as num).toDouble(),
+          });
+        }
 
         return mapped;
       } catch (e) {
