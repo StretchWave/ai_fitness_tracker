@@ -37,77 +37,97 @@ class _PoseDemoScreenState extends State<PoseDemoScreen> {
         child: const Icon(Icons.cameraswitch),
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.endTop,
-      body: Stack(
-        children: [
-          // 1. Native Camera View (Background)
-          const Positioned.fill(child: PoseCameraPreview()),
+      body: Center(
+        child: AspectRatio(
+          aspectRatio: 3 / 4, // Matches the CameraX target resolution (480x640)
+          child: Stack(
+            children: [
+              // 1. Native Camera View (Background)
+              const Positioned.fill(child: PoseCameraPreview()),
 
-          // 2. Overlay Data & Skeleton
-          Positioned.fill(
-            child: StreamBuilder<List<Map<String, double>>>(
-              stream: _bridge.poseStream,
-              builder: (context, snapshot) {
-                if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                  return const Center(
-                    child: Text(
-                      "Searching for body...",
-                      style: TextStyle(color: Colors.white, fontSize: 20),
-                    ),
-                  );
-                }
-
-                // Process every frame
-                _repCounter.processLandmarks(snapshot.data!);
-
-                // Update UI only if count changes (optimization)
-                if (_reps != _repCounter.count) {
-                  // Schedule build to update reps
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (mounted) setState(() => _reps = _repCounter.count);
-                  });
-                }
-
-                return Stack(
-                  children: [
-                    // Skeleton Overlay
-                    Positioned.fill(
-                      child: CustomPaint(
-                        painter: SkeletonPainter(snapshot.data!),
-                      ),
-                    ),
-
-                    // Rep Counter UI
-                    Positioned(
-                      bottom: 50,
-                      left: 0,
-                      right: 0,
-                      child: Column(
-                        children: [
-                          Text(
-                            "Reps: $_reps",
-                            style: const TextStyle(
-                              color: Colors.greenAccent,
-                              fontSize: 48,
-                              fontWeight: FontWeight.bold,
-                              shadows: [
-                                BoxShadow(blurRadius: 10, color: Colors.black),
-                              ],
-                            ),
+              // 2. Overlay Data & Skeleton
+              Positioned.fill(
+                child: StreamBuilder<List<Map<String, double>>>(
+                  stream: _bridge.poseStream,
+                  builder: (context, snapshot) {
+                    if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                      return const Center(
+                        child: Text(
+                          "Searching for body...",
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            shadows: [BoxShadow(blurRadius: 2)],
                           ),
-                          const SizedBox(height: 10),
-                          Text(
-                            "Data Points: ${snapshot.data!.length}",
-                            style: const TextStyle(color: Colors.white),
+                        ),
+                      );
+                    }
+
+                    // Process every frame
+                    _repCounter.processLandmarks(snapshot.data!);
+
+                    // Update UI only if count changes (optimization)
+                    if (_reps != _repCounter.count) {
+                      // Schedule build to update reps
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted) setState(() => _reps = _repCounter.count);
+                      });
+                    }
+
+                    return Stack(
+                      children: [
+                        // Skeleton Overlay
+                        Positioned.fill(
+                          child: CustomPaint(
+                            painter: SkeletonPainter(snapshot.data!),
                           ),
-                        ],
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
+                        ),
+
+                        // Rep Counter UI
+                        Positioned(
+                          bottom: 10,
+                          left: 0,
+                          right: 0,
+                          child: Column(
+                            children: [
+                              Text(
+                                "Reps: $_reps",
+                                style: const TextStyle(
+                                  color: Colors.greenAccent,
+                                  fontSize: 48,
+                                  fontWeight: FontWeight.bold,
+                                  shadows: [
+                                    BoxShadow(
+                                      blurRadius: 10,
+                                      color: Colors.black,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 5),
+                              Text(
+                                "Data Points: ${snapshot.data!.length}",
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  shadows: [
+                                    BoxShadow(
+                                      blurRadius: 2,
+                                      color: Colors.black,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

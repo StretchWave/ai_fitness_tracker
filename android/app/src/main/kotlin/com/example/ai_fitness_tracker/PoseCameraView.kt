@@ -34,7 +34,10 @@ class PoseCameraView(
     private val lifecycleOwner: LifecycleOwner
 ) : PlatformView, MethodChannel.MethodCallHandler {
 
-    private val previewView: PreviewView = PreviewView(context)
+    private val previewView: PreviewView = PreviewView(context).apply {
+        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+    }
+
     private var poseLandmarker: PoseLandmarker? = null
     private val backgroundExecutor = Executors.newSingleThreadExecutor()
     private val methodChannel = MethodChannel(binaryMessenger, "com.workout/pose_camera_control")
@@ -75,24 +78,49 @@ class PoseCameraView(
     }
 
     private fun setupMediaPipe() {
-        val baseOptions = BaseOptions.builder()
-            .setModelAssetPath("pose_landmarker_heavy.task")
-            .setDelegate(com.google.mediapipe.tasks.core.Delegate.GPU)
-            .build()
-            
-        val options = PoseLandmarker.PoseLandmarkerOptions.builder()
-            .setBaseOptions(baseOptions)
-            .setRunningMode(RunningMode.LIVE_STREAM)
-            .setResultListener(this::returnLivestreamResult)
-            .setErrorListener { error: RuntimeException ->
-                Log.e("PoseCameraView", "MediaPipe Error: ${error.message}")
-            }
-            .build()
-        
+        // Try initializing with GPU first
         try {
-            poseLandmarker = PoseLandmarker.createFromOptions(context, options)
+            val baseOptionsGpu = BaseOptions.builder()
+                .setModelAssetPath("pose_landmarker_heavy.task")
+                .setDelegate(com.google.mediapipe.tasks.core.Delegate.GPU)
+                .build()
+            
+            val optionsGpu = PoseLandmarker.PoseLandmarkerOptions.builder()
+                .setBaseOptions(baseOptionsGpu)
+                .setRunningMode(RunningMode.LIVE_STREAM)
+                .setResultListener(this::returnLivestreamResult)
+                .setErrorListener { error: RuntimeException ->
+                    Log.e("PoseCameraView", "MediaPipe GPU Error: ${error.message}")
+                }
+                .build()
+
+            poseLandmarker = PoseLandmarker.createFromOptions(context, optionsGpu)
+            Log.d("PoseCameraView", "MediaPipe initialized with GPU delegate")
+            return
         } catch (e: Exception) {
-            Log.e("PoseCameraView", "Error creating PoseLandmarker: ${e.message}")
+            Log.e("PoseCameraView", "GPU Initialization failed: ${e.message}. Falling back to CPU.")
+        }
+
+        // Fallback to CPU
+        try {
+            val baseOptionsCpu = BaseOptions.builder()
+                .setModelAssetPath("pose_landmarker_heavy.task")
+                .setDelegate(com.google.mediapipe.tasks.core.Delegate.CPU)
+                .build()
+
+            val optionsCpu = PoseLandmarker.PoseLandmarkerOptions.builder()
+                .setBaseOptions(baseOptionsCpu)
+                .setRunningMode(RunningMode.LIVE_STREAM)
+                .setResultListener(this::returnLivestreamResult)
+                .setErrorListener { error: RuntimeException ->
+                    Log.e("PoseCameraView", "MediaPipe CPU Error: ${error.message}")
+                }
+                .build()
+
+            poseLandmarker = PoseLandmarker.createFromOptions(context, optionsCpu)
+             Log.d("PoseCameraView", "MediaPipe initialized with CPU delegate")
+        } catch (e: Exception) {
+            Log.e("PoseCameraView", "Error creating PoseLandmarker (CPU): ${e.message}")
         }
     }
 
