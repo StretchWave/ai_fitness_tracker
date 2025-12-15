@@ -40,11 +40,22 @@ class _WorkoutScreenState extends State<WorkoutScreen>
 
   @override
   void dispose() {
+    //Function to stop the camera and dispose the service when leaving the screen
     WidgetsBinding.instance.removeObserver(this);
     _stop();
     // Dispose the service
     _poseDetectionService.close();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    //Function to pause the camera and dispose the service when leaving the app
+    if (state == AppLifecycleState.inactive) {
+      _stop();
+    } else if (state == AppLifecycleState.resumed) {
+      _initialize();
+    }
   }
 
   Future<void> _initialize() async {
