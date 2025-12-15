@@ -1,8 +1,16 @@
-//import 'package:ai_fitness_tracker/Screens/Home.dart';
-import 'package:ai_fitness_tracker/screens/workout_screen.dart';
+import 'package:ai_fitness_tracker/pose_demo.dart';
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
-void main() {
+List<CameraDescription> cameras = [];
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  try {
+    cameras = await availableCameras();
+  } on CameraException catch (e) {
+    debugPrint('Error: $e.code\nError Message: $e.description');
+  }
   runApp(const MyApp());
 }
 
@@ -13,7 +21,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: WorkoutScreen(),
+      home: const PoseDemoScreen(),
     );
   }
 }

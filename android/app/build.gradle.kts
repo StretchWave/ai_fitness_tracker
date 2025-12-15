@@ -24,10 +24,10 @@ android {
         applicationId = "com.example.ai_fitness_tracker"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
-        versionCode = flutter.versionCode
-        versionName = flutter.versionName
+        minSdk = 24
+        targetSdk = 36
+        versionCode = 1
+        versionName = "1.0.0"
     }
 
     buildTypes {
@@ -41,4 +41,16 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    // CameraX core library
+    val camera_version = "1.3.0-rc01"
+    implementation("androidx.camera:camera-core:$camera_version")
+    implementation("androidx.camera:camera-camera2:$camera_version")
+    implementation("androidx.camera:camera-lifecycle:$camera_version")
+    implementation("androidx.camera:camera-view:$camera_version")
+
+    // MediaPipe Tasks Vision
+    implementation("com.google.mediapipe:tasks-vision:0.10.14")
 }
