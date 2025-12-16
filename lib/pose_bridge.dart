@@ -8,8 +8,6 @@ class PoseBridge {
     return _channel.receiveBroadcastStream().map((event) {
       try {
         final List<dynamic> flatList = event;
-        // Optimization: received flat list [x, y, z, v, x, y, z, v...]
-
         final int pointCount = flatList.length ~/ 4;
         final List<Map<String, double>> mapped = [];
 
@@ -24,13 +22,6 @@ class PoseBridge {
 
         return mapped;
       } catch (e) {
-        // debugPrint requires 'package:flutter/foundation.dart';
-        // Adding it here to avoid compilation errors if not already imported.
-        // If you don't want this import, please remove it and ensure debugPrint is available.
-        // ignore: avoid_print
-        print(
-          "Flutter Bridge Error: $e",
-        ); // Using print as a fallback for debugPrint
         return [];
       }
     });

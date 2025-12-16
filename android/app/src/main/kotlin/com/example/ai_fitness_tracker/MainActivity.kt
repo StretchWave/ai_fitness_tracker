@@ -16,12 +16,10 @@ class MainActivity : FlutterActivity() {
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL_NAME).setStreamHandler(
             object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
-                    android.util.Log.d("PoseStream", "EventChannel onListen called")
                     eventSink = events
                 }
 
                 override fun onCancel(arguments: Any?) {
-                    android.util.Log.d("PoseStream", "EventChannel onCancel called")
                     eventSink = null
                 }
             }

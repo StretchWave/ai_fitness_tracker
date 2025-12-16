@@ -2,45 +2,120 @@ import 'dart:math';
 
 class RepCounter {
   int count = 0;
-  bool _isUp = false;
+  bool _isDown = false;
+  String feedback = "";
 
-  // MediaPipe Body Landmarks for PoseLandmarker (Full Body 33 Keypoints)
-  // 11: Left Shoulder, 13: Left Elbow, 15: Left Wrist
-  // 12: Right Shoulder, 14: Right Elbow, 16: Right Wrist
-
-  // Logic: Measure angle at Elbow (Shoulder - Elbow - Wrist)
-  // Extension (Down): ~160-180 degrees
-  // Flexion (Up): ~30-50 degrees
+  void reset() {
+    count = 0;
+    _isDown = false;
+    feedback = "";
+  }
 
   void processLandmarks(List<Map<String, double>> landmarks) {
     if (landmarks.length < 33) return;
 
-    // Check visibility logic if needed, assuming first high viz person
+    // 1. Detect Best Side (Left vs Right)
+    // Left: 11 (Shoulder), 13 (Elbow), 15 (Wrist)
+    // Right: 12 (Shoulder), 14 (Elbow), 16 (Wrist)
 
-    // We will check both arms and count if either does a curl, or stick to one.
-    // For simplicity, let's track the RIGHT arm (12, 14, 16)
+    double leftScore =
+        landmarks[11]['visibility']! +
+        landmarks[13]['visibility']! +
+        landmarks[15]['visibility']!;
 
-    final shoulder = landmarks[12];
-    final elbow = landmarks[14];
-    final wrist = landmarks[16];
+    double rightScore =
+        landmarks[12]['visibility']! +
+        landmarks[14]['visibility']! +
+        landmarks[16]['visibility']!;
 
-    if (shoulder['visibility']! < 0.5 ||
-        elbow['visibility']! < 0.5 ||
-        wrist['visibility']! < 0.5) {
+    Map<String, double> shoulder;
+    Map<String, double> elbow;
+    Map<String, double> wrist;
+    Map<String, double> hip;
+    String side = "";
+
+    if (leftScore > rightScore) {
+      shoulder = landmarks[11];
+      elbow = landmarks[13];
+      wrist = landmarks[15];
+      hip = landmarks[23]; // Left Hip
+      side = "Left";
+    } else {
+      shoulder = landmarks[12];
+      elbow = landmarks[14];
+      wrist = landmarks[16];
+      hip = landmarks[24]; // Right Hip
+      side = "Right";
+    }
+
+    // Safety Check: Border & Accuracy
+    if (!_isSafe(shoulder) ||
+        !_isSafe(elbow) ||
+        !_isSafe(wrist) ||
+        !_isSafe(hip)) {
+      feedback = "Step Inside Frame / Body Unclear";
       return;
     }
 
+    // Orientation Check: Must be Horizontal (Push-Up Position)
+    // Vertical (Standing) is disallowed.
+    if (!_isHorizontal(shoulder, hip)) {
+      feedback = "Assume Push-Up Position";
+      return;
+    }
+
+    // Direction Check: Shoulders must be ABOVE Wrists (lower Y value)
+    // Ensures user is pushing "down" (gravity) not pulling "down" or pushing "up"
+    if (shoulder['y']! >= wrist['y']!) {
+      feedback = "Hands Above Shoulders";
+      return;
+    }
+
+    // 2. Calculate Elbow Angle
     final angle = calculateAngle(shoulder, elbow, wrist);
+    final String angleStr = angle.toStringAsFixed(0);
 
-    // State Machine
-    if (angle > 160) {
-      _isUp = false; // Arm is down
-    }
+    // 3. State Machine (Push-Up)
+    // Relaxed Thresholds: Down < 110, Up > 140
 
-    if (!_isUp && angle < 50) {
-      _isUp = true;
-      count++;
+    if (angle > 140) {
+      if (_isDown) {
+        count++;
+        _isDown = false; // Reset state
+      }
+      feedback = "UP ($side: $angleStr°)";
+    } else if (angle < 110) {
+      _isDown = true;
+      feedback = "DOWN ($side: $angleStr°)";
+    } else {
+      feedback = "GO LOWER ($side: $angleStr°)";
     }
+  }
+
+  bool _isSafe(Map<String, double> point) {
+    // 1. Accuracy Check (> 50%)
+    if (point['visibility']! < 0.5) return false;
+
+    // 2. Border Check (5% Margin)
+    // Coords are normalized 0.0 - 1.0
+    double x = point['x']!;
+    double y = point['y']!;
+
+    if (x < 0.05 || x > 0.95) return false;
+    if (y < 0.05 || y > 0.95) return false;
+
+    return true;
+  }
+
+  bool _isHorizontal(Map<String, double> shoulder, Map<String, double> hip) {
+    if (shoulder['visibility']! < 0.5 || hip['visibility']! < 0.5)
+      return true; // Loose check if hidden
+
+    double dx = (shoulder['x']! - hip['x']!).abs();
+    double dy = (shoulder['y']! - hip['y']!).abs();
+
+    // Horizontal if X-distance is greater than Y-distance
+    return dx > dy;
   }
 
   double calculateAngle(
@@ -48,17 +123,13 @@ class RepCounter {
     Map<String, double> b,
     Map<String, double> c,
   ) {
-    // b is the center point (elbow)
     final radians =
         atan2(c['y']! - b['y']!, c['x']! - b['x']!) -
         atan2(a['y']! - b['y']!, a['x']! - b['x']!);
-
     var angle = (radians * 180.0 / pi).abs();
-
     if (angle > 180.0) {
       angle = 360 - angle;
     }
-
     return angle;
   }
 }

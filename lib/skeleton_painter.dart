@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 class SkeletonPainter extends CustomPainter {
   final List<Map<String, double>> landmarks;
-  final Size sourceSize; // Not used yet, assuming normalized coordinates (0-1)
+  final Size sourceSize;
 
   SkeletonPainter(this.landmarks, {this.sourceSize = Size.zero});
 

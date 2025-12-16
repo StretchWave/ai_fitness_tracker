@@ -42,11 +42,19 @@ class PoseCameraView(
     private val backgroundExecutor = Executors.newSingleThreadExecutor()
     private val methodChannel = MethodChannel(binaryMessenger, "com.workout/pose_camera_control")
     private var currentCameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
+    
+    // Optimization: Reuse Bitmap to avoid GC churn
+    private var bitmapBuffer: Bitmap? = null
 
     init {
         methodChannel.setMethodCallHandler(this)
-        setupMediaPipe()
+        // 1. Start Camera Immediately (Main Thread) to show preview ASAP
         startCamera()
+        
+        // 2. Initialize Helper AI Model in Background to prevent UI freeze
+        backgroundExecutor.execute {
+            setupMediaPipe()
+        }
     }
 
     override fun getView(): View {
@@ -167,33 +175,34 @@ class PoseCameraView(
 
         val frameTime = System.currentTimeMillis()
         
-        // Optimization: Use the lower resolution bitmap directly
-        val bitmapBuffer = Bitmap.createBitmap(
-            imageProxy.width,
-            imageProxy.height,
-            Bitmap.Config.ARGB_8888
-        )
-        bitmapBuffer.copyPixelsFromBuffer(imageProxy.planes[0].buffer)
+        // Optimization: Use the lower resolution bitmap directly & Reuse Buffer
+        // Rotate bitmap
+        
+        if (bitmapBuffer == null || bitmapBuffer?.width != imageProxy.width || bitmapBuffer?.height != imageProxy.height) {
+            bitmapBuffer = Bitmap.createBitmap(
+                imageProxy.width,
+                imageProxy.height,
+                Bitmap.Config.ARGB_8888
+            )
+        }
+        
+        bitmapBuffer?.copyPixelsFromBuffer(imageProxy.planes[0].buffer)
         
         val matrix = Matrix()
         matrix.postRotate(imageProxy.imageInfo.rotationDegrees.toFloat())
         
-        // REMOVED: Unconditional mirroring. MediaPipe should see the "Real" image (unflipped).
-        // matrix.postScale(-1f, 1f, imageProxy.width / 2f, imageProxy.height / 2f)
-
+        // We still need a new bitmap for rotation unfortunately unless we handle rotation in MediaPipe options
+        // or use a different Image object type. For now, let's keep the rotation bitmap as is but we saved one allocation above.
+        // Actually, we can try to improve this further later.
+        
         val rotatedBitmap = Bitmap.createBitmap(
-            bitmapBuffer, 0, 0, bitmapBuffer.width, bitmapBuffer.height, matrix, true
+            bitmapBuffer!!, 0, 0, bitmapBuffer!!.width, bitmapBuffer!!.height, matrix, true
         )
 
         val mpImage = BitmapImageBuilder(rotatedBitmap).build()
 
         poseLandmarker?.detectAsync(mpImage, frameTime)
         
-        // Important: Close the imageProxy after processing is dispatched
-        // Note: detectAsync copies data effectively so we can close proxy after building MPImage?
-        // Actually MPImage might hold reference. Safe to close after detectAsync returns? 
-        // MediaPipe docs say: "The app should close the imageProxy after the image is processed"
-        // Since we created a Bitmap copy, we can close imageProxy immediately.
         imageProxy.close()
     }
 
@@ -205,10 +214,8 @@ class PoseCameraView(
 
         // Extract first person detected
         val landmarks = result.landmarks()[0]
-        // Log.d("PoseStream", "Native: Detected ${landmarks.size} landmarks")
 
         // Optimization: Send FLAT ARRAY of Doubles instead of Map
-        // Format: [x0, y0, z0, v0, x1, y1, z1, v1, ...]
         val flatList = ArrayList<Double>(landmarks.size * 4)
         val isFrontCamera = currentCameraSelector == CameraSelector.DEFAULT_FRONT_CAMERA
 
@@ -221,7 +228,7 @@ class PoseCameraView(
             }
             flatList.add(landmark.y().toDouble())
             flatList.add(landmark.z().toDouble())
-            flatList.add(1.0) // Visibility fixed to 1.0 for now
+            flatList.add(landmark.visibility().orElse(0.0f).toDouble())
         }
 
         // Send to Flutter on Main Thread
