@@ -1,16 +1,16 @@
-import 'package:ai_fitness_tracker/pose_demo.dart';
+import 'package:ai_fitness_tracker/home_screen.dart'; // Import Home
+import 'package:ai_fitness_tracker/widgets/ai_status_overlay.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 List<CameraDescription> cameras = [];
 
-Future<void> main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  try {
-    cameras = await availableCameras();
-  } on CameraException catch (e) {
-    debugPrint('Error: $e.code\nError Message: $e.description');
-  }
+  SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  // Using Native Camera
+
   runApp(const MyApp());
 }
 
@@ -21,7 +21,10 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: const PoseDemoScreen(),
+      builder: (context, child) {
+        return GlobalAiOverlay(child: child!);
+      },
+      home: const HomeScreen(), // Set Home
     );
   }
 }

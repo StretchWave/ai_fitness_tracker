@@ -24,6 +24,20 @@ class MainActivity : FlutterActivity() {
                 }
             }
         )
+        
+        // 2. Setup App Control Channel (Preload)
+        io.flutter.plugin.common.MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.workout/app_control")
+            .setMethodCallHandler { call, result ->
+                if (call.method == "preloadModel") {
+                    MediaPipeManager.preload(context) { success ->
+                        runOnUiThread {
+                            result.success(success)
+                        }
+                    }
+                } else {
+                    result.notImplemented()
+                }
+            }
 
         // 2. Register PlatformView
         flutterEngine

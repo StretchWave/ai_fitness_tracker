@@ -38,7 +38,6 @@ class PoseCameraView(
         implementationMode = PreviewView.ImplementationMode.COMPATIBLE
     }
 
-    private var poseLandmarker: PoseLandmarker? = null
     private val backgroundExecutor = Executors.newSingleThreadExecutor()
     private val methodChannel = MethodChannel(binaryMessenger, "com.workout/pose_camera_control")
     private var currentCameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
@@ -48,13 +47,15 @@ class PoseCameraView(
 
     init {
         methodChannel.setMethodCallHandler(this)
-        // 1. Start Camera Immediately (Main Thread) to show preview ASAP
-        startCamera()
         
-        // 2. Initialize Helper AI Model in Background to prevent UI freeze
-        backgroundExecutor.execute {
-            setupMediaPipe()
-        }
+        // 1. Attach to Shared Manager
+        MediaPipeManager.attachListener(this::returnLivestreamResult)
+        
+        // 2. Ensure loaded (Double check)
+        MediaPipeManager.preload(context)
+
+        // 3. Start Camera
+        startCamera()
     }
 
     override fun getView(): View {
@@ -64,7 +65,9 @@ class PoseCameraView(
     override fun dispose() {
         methodChannel.setMethodCallHandler(null)
         backgroundExecutor.shutdown()
-        poseLandmarker?.close()
+        
+        // Detach, but DO NOT close the singleton model
+        MediaPipeManager.detachListener()
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -85,52 +88,6 @@ class PoseCameraView(
         startCamera()
     }
 
-    private fun setupMediaPipe() {
-        // Try initializing with GPU first
-        try {
-            val baseOptionsGpu = BaseOptions.builder()
-                .setModelAssetPath("pose_landmarker_heavy.task")
-                .setDelegate(com.google.mediapipe.tasks.core.Delegate.GPU)
-                .build()
-            
-            val optionsGpu = PoseLandmarker.PoseLandmarkerOptions.builder()
-                .setBaseOptions(baseOptionsGpu)
-                .setRunningMode(RunningMode.LIVE_STREAM)
-                .setResultListener(this::returnLivestreamResult)
-                .setErrorListener { error: RuntimeException ->
-                    Log.e("PoseCameraView", "MediaPipe GPU Error: ${error.message}")
-                }
-                .build()
-
-            poseLandmarker = PoseLandmarker.createFromOptions(context, optionsGpu)
-            Log.d("PoseCameraView", "MediaPipe initialized with GPU delegate")
-            return
-        } catch (e: Exception) {
-            Log.e("PoseCameraView", "GPU Initialization failed: ${e.message}. Falling back to CPU.")
-        }
-
-        // Fallback to CPU
-        try {
-            val baseOptionsCpu = BaseOptions.builder()
-                .setModelAssetPath("pose_landmarker_heavy.task")
-                .setDelegate(com.google.mediapipe.tasks.core.Delegate.CPU)
-                .build()
-
-            val optionsCpu = PoseLandmarker.PoseLandmarkerOptions.builder()
-                .setBaseOptions(baseOptionsCpu)
-                .setRunningMode(RunningMode.LIVE_STREAM)
-                .setResultListener(this::returnLivestreamResult)
-                .setErrorListener { error: RuntimeException ->
-                    Log.e("PoseCameraView", "MediaPipe CPU Error: ${error.message}")
-                }
-                .build()
-
-            poseLandmarker = PoseLandmarker.createFromOptions(context, optionsCpu)
-             Log.d("PoseCameraView", "MediaPipe initialized with CPU delegate")
-        } catch (e: Exception) {
-            Log.e("PoseCameraView", "Error creating PoseLandmarker (CPU): ${e.message}")
-        }
-    }
 
     private fun startCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
@@ -168,7 +125,8 @@ class PoseCameraView(
     }
 
     private fun processImageProxy(imageProxy: ImageProxy) {
-        if (poseLandmarker == null) {
+        val landmarker = MediaPipeManager.poseLandmarker
+        if (landmarker == null) {
             imageProxy.close()
             return
         }
@@ -201,7 +159,7 @@ class PoseCameraView(
 
         val mpImage = BitmapImageBuilder(rotatedBitmap).build()
 
-        poseLandmarker?.detectAsync(mpImage, frameTime)
+        landmarker.detectAsync(mpImage, frameTime)
         
         imageProxy.close()
     }
@@ -210,28 +168,28 @@ class PoseCameraView(
         result: PoseLandmarkerResult,
         input: MPImage
     ) {
-        if (result.landmarks().isEmpty()) return
-
-        // Extract first person detected
-        val landmarks = result.landmarks()[0]
-
         // Optimization: Send FLAT ARRAY of Doubles instead of Map
-        val flatList = ArrayList<Double>(landmarks.size * 4)
-        val isFrontCamera = currentCameraSelector == CameraSelector.DEFAULT_FRONT_CAMERA
+        val flatList = ArrayList<Double>()
 
-        for (landmark in landmarks) {
-            // Conditional Mirroring
-            if (isFrontCamera) {
-                flatList.add(1.0 - landmark.x().toDouble())
-            } else {
-                flatList.add(landmark.x().toDouble())
+        if (result.landmarks().isNotEmpty()) {
+            // Extract first person detected
+            val landmarks = result.landmarks()[0]
+            val isFrontCamera = currentCameraSelector == CameraSelector.DEFAULT_FRONT_CAMERA
+
+            for (landmark in landmarks) {
+                // Conditional Mirroring
+                if (isFrontCamera) {
+                    flatList.add(1.0 - landmark.x().toDouble())
+                } else {
+                    flatList.add(landmark.x().toDouble())
+                }
+                flatList.add(landmark.y().toDouble())
+                flatList.add(landmark.z().toDouble())
+                flatList.add(landmark.visibility().orElse(0.0f).toDouble())
             }
-            flatList.add(landmark.y().toDouble())
-            flatList.add(landmark.z().toDouble())
-            flatList.add(landmark.visibility().orElse(0.0f).toDouble())
         }
 
-        // Send to Flutter on Main Thread
+        // Send to Flutter on Main Thread (Even if empty)
         ContextCompat.getMainExecutor(context).execute {
             eventSinkProvider()?.success(flatList)
         }

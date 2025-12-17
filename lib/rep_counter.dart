@@ -4,11 +4,15 @@ class RepCounter {
   int count = 0;
   bool _isDown = false;
   String feedback = "";
+  double accuracy = 0.0;
+  bool isProperForm = true;
 
   void reset() {
     count = 0;
     _isDown = false;
     feedback = "";
+    accuracy = 0.0;
+    isProperForm = true;
   }
 
   void processLandmarks(List<Map<String, double>> landmarks) {
@@ -48,12 +52,21 @@ class RepCounter {
       side = "Right";
     }
 
+    // Calculate Base Accuracy from Visibility Scores (Max 3.0)
+    // We max this at 100% if visibility is good.
+    // Average visibility of 3 key points.
+    double currentScore = (side == "Left") ? leftScore : rightScore;
+    accuracy = (currentScore / 3.0) * 100;
+    if (accuracy > 100) accuracy = 100;
+
     // Safety Check: Border & Accuracy
     if (!_isSafe(shoulder) ||
         !_isSafe(elbow) ||
         !_isSafe(wrist) ||
         !_isSafe(hip)) {
       feedback = "Step Inside Frame / Body Unclear";
+      isProperForm = false;
+      accuracy = 0; // Penalize heavy for bad tracking
       return;
     }
 
@@ -61,6 +74,8 @@ class RepCounter {
     // Vertical (Standing) is disallowed.
     if (!_isHorizontal(shoulder, hip)) {
       feedback = "Assume Push-Up Position";
+      isProperForm = false;
+      accuracy = 10; // Low score for wrong position
       return;
     }
 
@@ -68,12 +83,16 @@ class RepCounter {
     // Ensures user is pushing "down" (gravity) not pulling "down" or pushing "up"
     if (shoulder['y']! >= wrist['y']!) {
       feedback = "Hands Above Shoulders";
+      isProperForm = false;
+      accuracy = 30; // Medium penalty
       return;
     }
 
+    // If we passed all checks, form is generally correct
+    isProperForm = true;
+
     // 2. Calculate Elbow Angle
     final angle = calculateAngle(shoulder, elbow, wrist);
-    final String angleStr = angle.toStringAsFixed(0);
 
     // 3. State Machine (Push-Up)
     // Relaxed Thresholds: Down < 110, Up > 140
@@ -83,12 +102,12 @@ class RepCounter {
         count++;
         _isDown = false; // Reset state
       }
-      feedback = "UP ($side: $angleStr°)";
+      feedback = "UP";
     } else if (angle < 110) {
       _isDown = true;
-      feedback = "DOWN ($side: $angleStr°)";
+      feedback = "DOWN";
     } else {
-      feedback = "GO LOWER ($side: $angleStr°)";
+      feedback = "GO LOWER";
     }
   }
 
