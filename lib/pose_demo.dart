@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
+import 'package:pedometer/pedometer.dart';
 import 'package:ai_fitness_tracker/camera_view.dart';
 import 'package:ai_fitness_tracker/pose_bridge.dart';
 import 'package:ai_fitness_tracker/skeleton_painter.dart';
@@ -27,6 +29,12 @@ class _PoseDemoScreenState extends State<PoseDemoScreen> {
   bool _permissionGranted = false;
   int _reps = 0;
 
+  // Pedometer Vars
+  Stream<StepCount>? _stepCountStream;
+  int _steps = 0;
+  int _initialSteps = -1;
+  int _targetSteps = 1000;
+
   // Workout Sequence Data
   final List<String> _exercises = ['Push-Ups', 'Sit-Ups', 'Squats', 'Jogging'];
   int _currentExerciseIndex = 0;
@@ -35,12 +43,19 @@ class _PoseDemoScreenState extends State<PoseDemoScreen> {
   void initState() {
     super.initState();
     _checkPermission();
-    // Allow Landscape for this screen
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]);
+    _updateOrientation();
+  }
+
+  void _updateOrientation() {
+    if (_exercises[_currentExerciseIndex] == 'Jogging') {
+      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    } else {
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+    }
   }
 
   @override
@@ -50,12 +65,51 @@ class _PoseDemoScreenState extends State<PoseDemoScreen> {
     super.dispose();
   }
 
+  void _initPedometer() {
+    _initialSteps = -1; // Reset baseline
+    _steps = 0;
+
+    _stepCountStream = Pedometer.stepCountStream;
+    _stepCountStream!.listen(_onStepCount).onError(_onStepCountError);
+  }
+
+  void _onStepCount(StepCount event) {
+    if (!mounted) return;
+    if (_exercises[_currentExerciseIndex] != 'Jogging') return;
+
+    if (_initialSteps == -1) {
+      _initialSteps = event.steps;
+    }
+
+    setState(() {
+      _steps = event.steps - _initialSteps;
+      if (_steps < 0) _steps = 0; // Integrity check
+    });
+  }
+
+  void _onStepCountError(error) {
+    debugPrint("Pedometer Error: $error");
+    setState(() {
+      _steps = -1; // Indicate error in UI
+    });
+  }
+
   Future<void> _checkPermission() async {
     try {
-      final status = await Permission.camera.request();
+      // Request Camera AND Activity Recognition (for Pedometer)
+      final statuses = await [
+        Permission.camera,
+        Permission.activityRecognition,
+      ].request();
+
       setState(() {
-        _permissionGranted = status.isGranted;
+        _permissionGranted = statuses[Permission.camera]!.isGranted;
       });
+
+      if (statuses[Permission.activityRecognition]!.isDenied) {
+        debugPrint("Activity Recognition Denied");
+        // We could show a snackbar here
+      }
     } catch (e) {
       setState(() {
         _permissionGranted = true;
@@ -87,6 +141,12 @@ class _PoseDemoScreenState extends State<PoseDemoScreen> {
         _reps = 0;
         _repCounter.reset();
       });
+
+      _updateOrientation();
+
+      if (_exercises[_currentExerciseIndex] == 'Jogging') {
+        _initPedometer();
+      }
     } else {
       _showCompletionDialog();
     }
@@ -190,6 +250,10 @@ class _PoseDemoScreenState extends State<PoseDemoScreen> {
   }
 
   Widget _buildCameraArea(String currentExercise) {
+    if (currentExercise == 'Jogging') {
+      return _buildJoggingUI();
+    }
+
     return Stack(
       children: [
         // 1. Native Camera View with GlobalKey to persist across rotation
@@ -224,8 +288,13 @@ class _PoseDemoScreenState extends State<PoseDemoScreen> {
                     return const SizedBox();
                   }
 
-                  if (currentExercise == 'Push-Ups') {
-                    _repCounter.processLandmarks(snapshot.data!);
+                  if (currentExercise == 'Push-Ups' ||
+                      currentExercise == 'Squats' ||
+                      currentExercise == 'Sit-Ups') {
+                    _repCounter.processLandmarks(
+                      snapshot.data!,
+                      currentExercise,
+                    );
                   }
 
                   if (_reps != _repCounter.count) {
@@ -259,6 +328,73 @@ class _PoseDemoScreenState extends State<PoseDemoScreen> {
             ),
           ),
       ],
+    );
+  }
+
+  Widget _buildJoggingUI() {
+    if (_steps == -1) {
+      return Container(
+        color: Colors.black,
+        child: Center(
+          child: Text(
+            "Step Sensor Not Available\n(Try walking to wake it up)",
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.redAccent, fontSize: 18),
+          ),
+        ),
+      );
+    }
+
+    double progress = _steps / _targetSteps;
+    if (progress > 1.0) progress = 1.0;
+
+    return Container(
+      color: Colors.black,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.directions_run,
+              size: 80,
+              color: Colors.greenAccent,
+            ),
+            const SizedBox(height: 30),
+            const Text(
+              "Jog in Place",
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              "Goal: $_targetSteps Steps",
+              style: const TextStyle(color: Colors.white54, fontSize: 16),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: 200,
+              child: LinearProgressIndicator(
+                value: progress,
+                backgroundColor: Colors.grey[800],
+                color: Colors.greenAccent,
+                minHeight: 10,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              "$_steps / $_targetSteps",
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -299,7 +435,9 @@ class _PoseDemoScreenState extends State<PoseDemoScreen> {
     );
 
     List<Widget> children = [
-      if (currentExercise == 'Push-Ups') ...[
+      if (currentExercise == 'Push-Ups' ||
+          currentExercise == 'Squats' ||
+          currentExercise == 'Sit-Ups') ...[
         // Reps
         Column(
           mainAxisAlignment: MainAxisAlignment.center,
