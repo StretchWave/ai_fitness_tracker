@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:ai_fitness_tracker/pose_demo.dart';
+import 'package:ai_fitness_tracker/screens/pose_demo.dart';
+import 'package:ai_fitness_tracker/services/workout_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -9,6 +10,23 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  Map<String, dynamic> _progress = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProgress();
+  }
+
+  Future<void> _loadProgress() async {
+    final progress = await WorkoutService().getTodayProgress();
+    if (mounted) {
+      setState(() {
+        _progress = progress;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -25,14 +43,37 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Full Body Routine',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1.1,
-                      ),
+                    Row(
+                      children: [
+                        const Text(
+                          'Full Body Routine',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 32,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.1,
+                          ),
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          icon: const Icon(
+                            Icons.delete_forever,
+                            color: Colors.redAccent,
+                          ),
+                          onPressed: () async {
+                            await WorkoutService().clearTodayProgress();
+                            _loadProgress();
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text("Dev: Progress Reset"),
+                                ),
+                              );
+                            }
+                          },
+                          tooltip: "Dev: Reset Progress",
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 10),
                     const Text(
@@ -49,25 +90,37 @@ class _HomeScreenState extends State<HomeScreen> {
                         children: [
                           _buildWorkoutCard(
                             context,
-                            title: '1. Push-Ups',
+                            title: '1. Box Push-Ups',
+                            lookupName: 'Box Push-Ups',
+                            icon:
+                                Icons.accessibility, // Or another relevant icon
+                            color: Colors.tealAccent,
+                          ),
+                          _buildWorkoutCard(
+                            context,
+                            title: '2. Push-Ups',
+                            lookupName: 'Push-Ups',
                             icon: Icons.fitness_center,
                             color: Colors.blueAccent,
                           ),
                           _buildWorkoutCard(
                             context,
-                            title: '2. Sit-Ups',
+                            title: '3. Sit-Ups',
+                            lookupName: 'Sit-Ups',
                             icon: Icons.accessibility_new,
                             color: Colors.orangeAccent,
                           ),
                           _buildWorkoutCard(
                             context,
-                            title: '3. Squats',
+                            title: '4. Squats',
+                            lookupName: 'Squats',
                             icon: Icons.directions_walk,
                             color: Colors.purpleAccent,
                           ),
                           _buildWorkoutCard(
                             context,
-                            title: '4. Jogging',
+                            title: '5. Jogging',
+                            lookupName: 'Jogging',
                             icon: Icons.directions_run,
                             color: Colors.greenAccent,
                           ),
@@ -89,12 +142,13 @@ class _HomeScreenState extends State<HomeScreen> {
               child: SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.of(context).push(
+                  onPressed: () async {
+                    await Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (context) => const PoseDemoScreen(),
                       ),
                     );
+                    _loadProgress(); // Reload when returning
                   },
                   icon: const Icon(Icons.camera_alt),
                   label: const Text(
@@ -125,9 +179,11 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildWorkoutCard(
     BuildContext context, {
     required String title,
+    required String lookupName,
     required IconData icon,
     required Color color,
   }) {
+    final isCompleted = _progress[lookupName]?['isCompleted'] == true;
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
@@ -147,7 +203,11 @@ class _HomeScreenState extends State<HomeScreen> {
               color: color.withOpacity(0.2),
               shape: BoxShape.circle,
             ),
-            child: Icon(icon, size: 40, color: color),
+            child: Icon(
+              isCompleted ? Icons.check : icon,
+              size: 40,
+              color: isCompleted ? Colors.white : color,
+            ),
           ),
           const SizedBox(height: 20),
           Text(
@@ -159,9 +219,13 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
-            '10 Reps',
-            style: TextStyle(color: Colors.white38, fontSize: 12),
+          Text(
+            isCompleted ? 'Completed' : '10 Reps',
+            style: TextStyle(
+              color: isCompleted ? Colors.greenAccent : Colors.white38,
+              fontSize: 12,
+              fontWeight: isCompleted ? FontWeight.bold : FontWeight.normal,
+            ),
           ),
         ],
       ),

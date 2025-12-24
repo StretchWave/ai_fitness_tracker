@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:pedometer/pedometer.dart';
-import 'package:ai_fitness_tracker/camera_view.dart';
-import 'package:ai_fitness_tracker/pose_bridge.dart';
-import 'package:ai_fitness_tracker/skeleton_painter.dart';
-import 'package:ai_fitness_tracker/rep_counter.dart';
+import 'package:ai_fitness_tracker/services/workout_service.dart';
+import 'package:ai_fitness_tracker/screens/workout_summary_screen.dart';
+import 'package:ai_fitness_tracker/widgets/camera_view.dart';
+import 'package:ai_fitness_tracker/logic/pose_bridge.dart';
+import 'package:ai_fitness_tracker/painters/skeleton_painter.dart';
+import 'package:ai_fitness_tracker/logic/rep_counter.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:native_device_orientation/native_device_orientation.dart';
@@ -33,17 +35,65 @@ class _PoseDemoScreenState extends State<PoseDemoScreen> {
   Stream<StepCount>? _stepCountStream;
   int _steps = 0;
   int _initialSteps = -1;
+  int _savedSteps = 0;
   int _targetSteps = 1000;
+  final int _targetReps = 10;
+  bool _isTransitioning = false;
 
   // Workout Sequence Data
-  final List<String> _exercises = ['Push-Ups', 'Sit-Ups', 'Squats', 'Jogging'];
+  final List<String> _exercises = [
+    'Box Push-Ups',
+    'Push-Ups',
+    'Sit-Ups',
+    'Squats',
+    'Jogging',
+  ];
   int _currentExerciseIndex = 0;
+  DateTime? _exerciseStartTime;
 
   @override
   void initState() {
     super.initState();
     _checkPermission();
+    // Default orientation until loaded
     _updateOrientation();
+    _exerciseStartTime = DateTime.now();
+
+    // Check for already completed exercises
+    _loadInitialProgress();
+  }
+
+  Future<void> _loadInitialProgress() async {
+    final progress = await WorkoutService().getTodayProgress();
+
+    int firstIncomplete = -1;
+    for (int i = 0; i < _exercises.length; i++) {
+      final name = _exercises[i];
+      if (progress[name]?['isCompleted'] != true) {
+        firstIncomplete = i;
+        break;
+      }
+    }
+
+    if (mounted) {
+      if (firstIncomplete == -1) {
+        // All completed!
+        // We delay slightly to let the build finish first
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _showSummaryScreen();
+        });
+      } else if (firstIncomplete > 0) {
+        // Skip ahead
+        setState(() {
+          _currentExerciseIndex = firstIncomplete;
+          _exerciseStartTime = DateTime.now();
+        });
+        _updateOrientation();
+        if (_exercises[_currentExerciseIndex] == 'Jogging') {
+          _initPedometer(); // Will call _restoreJoggingData internally
+        }
+      }
+    }
   }
 
   void _updateOrientation() {
@@ -69,8 +119,34 @@ class _PoseDemoScreenState extends State<PoseDemoScreen> {
     _initialSteps = -1; // Reset baseline
     _steps = 0;
 
+    // Restore saved steps if any
+    _restoreJoggingData();
+
     _stepCountStream = Pedometer.stepCountStream;
     _stepCountStream!.listen(_onStepCount).onError(_onStepCountError);
+  }
+
+  Future<void> _restoreJoggingData() async {
+    try {
+      final progress = await WorkoutService().getTodayProgress();
+      if (progress.containsKey('Jogging')) {
+        final data = progress['Jogging'];
+        if (data != null && data['progressValue'] is int) {
+          final saved = data['progressValue'] as int;
+          if (mounted) {
+            setState(() {
+              _savedSteps = saved;
+              // If we have no steps from sensor yet, show saved
+              if (_initialSteps == -1) {
+                _steps = saved;
+              }
+            });
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint("Error restoring jogging data: $e");
+    }
   }
 
   void _onStepCount(StepCount event) {
@@ -82,9 +158,27 @@ class _PoseDemoScreenState extends State<PoseDemoScreen> {
     }
 
     setState(() {
-      _steps = event.steps - _initialSteps;
+      _steps = (event.steps - _initialSteps) + _savedSteps;
       if (_steps < 0) _steps = 0; // Integrity check
+
+      if (_steps >= _targetSteps && !_isTransitioning) {
+        _handleGoalMet();
+      }
     });
+
+    // Save progress safely outside setState
+    if (!_isTransitioning) {
+      WorkoutService()
+          .saveExerciseProgress(
+            exerciseName: 'Jogging',
+            isCompleted: _steps >= _targetSteps,
+            durationSeconds: DateTime.now()
+                .difference(_exerciseStartTime!)
+                .inSeconds,
+            progressValue: _steps,
+          )
+          .catchError((e) => debugPrint("Save Error: $e"));
+    }
   }
 
   void _onStepCountError(error) {
@@ -134,12 +228,59 @@ class _PoseDemoScreenState extends State<PoseDemoScreen> {
     });
   }
 
-  void _nextExercise() {
+  Future<void> _nextExercise() async {
+    if (_isTransitioning) return; // Prevent double save
+
+    // Check validation if manually triggered (not auto-advanced)
+    bool isGoalMet = false;
+    if (_exercises[_currentExerciseIndex] == 'Jogging') {
+      isGoalMet = _steps >= _targetSteps;
+    } else {
+      isGoalMet = _reps >= _targetReps;
+    }
+
+    if (!isGoalMet) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Goal not met yet! Keep going!"),
+          duration: Duration(seconds: 1),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isTransitioning = true;
+    });
+
+    // 1. Save current exercise data
+    final duration = DateTime.now().difference(_exerciseStartTime!).inSeconds;
+
+    // Collect feedback
+    String? feedbackMsg;
+    if (_repCounter.formIssues.isNotEmpty) {
+      feedbackMsg = "Fix: ${_repCounter.formIssues.join(', ')}";
+    }
+
+    await WorkoutService().saveExerciseProgress(
+      exerciseName: _exercises[_currentExerciseIndex],
+      isCompleted: true,
+      durationSeconds: duration,
+      feedback: feedbackMsg,
+    );
+
+    if (mounted) {
+      setState(() {
+        _isTransitioning = false;
+      });
+    }
+
     if (_currentExerciseIndex < _exercises.length - 1) {
       setState(() {
         _currentExerciseIndex++;
         _reps = 0;
         _repCounter.reset();
+        _exerciseStartTime = DateTime.now(); // Reset timer for next
       });
 
       _updateOrientation();
@@ -148,36 +289,71 @@ class _PoseDemoScreenState extends State<PoseDemoScreen> {
         _initPedometer();
       }
     } else {
-      _showCompletionDialog();
+      _showSummaryScreen();
     }
   }
 
-  void _showCompletionDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text("Workout Complete!"),
-        content: const Text(
-          "Great job! You've finished the full body routine.",
+  void _handleGoalMet() {
+    if (_isTransitioning) return;
+    _isTransitioning = true;
+
+    // Show feedback
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          "Goal Reached! Moving to next exercise...",
+          style: TextStyle(color: Colors.white),
         ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              Navigator.of(context).pop();
-            },
-            child: const Text("Finish"),
-          ),
-        ],
+        backgroundColor: Colors.green,
+        duration: Duration(seconds: 2),
       ),
     );
+
+    // Delay slightly for UX then move
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) {
+        setState(() {
+          _isTransitioning = false; // Reset to allow _nextExercise to run
+        });
+        _nextExercise();
+      }
+    });
+  }
+
+  Future<void> _showSummaryScreen() async {
+    final result = await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => WorkoutSummaryScreen(
+          exercises: _exercises,
+          onFinish: () {
+            Navigator.of(context).pop(); // Close summary
+            Navigator.of(context).pop(); // Close demo screen
+          },
+        ),
+      ),
+    );
+
+    // Handle Retry
+    if (result != null && result is String) {
+      final index = _exercises.indexOf(result);
+      if (index != -1) {
+        setState(() {
+          _currentExerciseIndex = index;
+          _reps = 0;
+          _repCounter.reset();
+          _exerciseStartTime = DateTime.now();
+          // Reset orientation if needed
+          _updateOrientation();
+          if (_exercises[index] == 'Jogging') _initPedometer();
+        });
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     String currentExercise = _exercises[_currentExerciseIndex];
-    int targetReps = 10;
+    int targetReps = _targetReps;
 
     final isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
@@ -201,6 +377,17 @@ class _PoseDemoScreenState extends State<PoseDemoScreen> {
                   icon: const Icon(Icons.refresh),
                   onPressed: _resetCounter,
                   tooltip: "Reset Counter",
+                ),
+                // Developer Skip
+                IconButton(
+                  icon: const Icon(Icons.bug_report, color: Colors.orange),
+                  onPressed: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text("Dev: Skipping to Summary")),
+                    );
+                    _showSummaryScreen();
+                  },
+                  tooltip: "Dev: Skip to Summary",
                 ),
               ],
             ),
@@ -289,6 +476,7 @@ class _PoseDemoScreenState extends State<PoseDemoScreen> {
                   }
 
                   if (currentExercise == 'Push-Ups' ||
+                      currentExercise == 'Box Push-Ups' ||
                       currentExercise == 'Squats' ||
                       currentExercise == 'Sit-Ups') {
                     _repCounter.processLandmarks(
@@ -299,7 +487,12 @@ class _PoseDemoScreenState extends State<PoseDemoScreen> {
 
                   if (_reps != _repCounter.count) {
                     WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (mounted) setState(() => _reps = _repCounter.count);
+                      if (mounted) {
+                        setState(() => _reps = _repCounter.count);
+                        if (_reps >= _targetReps && !_isTransitioning) {
+                          _handleGoalMet();
+                        }
+                      }
                     });
                   }
 
@@ -436,6 +629,7 @@ class _PoseDemoScreenState extends State<PoseDemoScreen> {
 
     List<Widget> children = [
       if (currentExercise == 'Push-Ups' ||
+          currentExercise == 'Box Push-Ups' ||
           currentExercise == 'Squats' ||
           currentExercise == 'Sit-Ups') ...[
         // Reps

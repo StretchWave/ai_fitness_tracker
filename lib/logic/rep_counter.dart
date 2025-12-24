@@ -13,7 +13,10 @@ class RepCounter {
     feedback = "";
     accuracy = 0.0;
     isProperForm = true;
+    formIssues.clear();
   }
+
+  final Set<String> formIssues = {};
 
   void processLandmarks(List<Map<String, double>> landmarks, String exercise) {
     if (landmarks.length < 33) return;
@@ -58,35 +61,49 @@ class RepCounter {
     Map<String, double> ankle = side == "Left" ? landmarks[27] : landmarks[28];
 
     // Calculate Accuracy based on relevant points
-    double currentScore = (side == "Left") ? leftScore : rightScore;
-    accuracy = (currentScore / 3.0) * 100;
-    if (accuracy > 100) accuracy = 100;
+    // User Request: Don't decrease accuracy for body NOT seeing (visibility).
+    // Only decrease for bad form.
+    // So we don't calculate based on visibility score anymore.
+    // accuracy = (currentScore / 3.0) * 100;
+    // if (accuracy > 100) accuracy = 100;
 
     // Safety Checks
-    if (exercise == 'Push-Ups') {
+    if (exercise == 'Push-Ups' || exercise == 'Box Push-Ups') {
+      // Handle both types
       if (!_isSafe(shoulder) ||
           !_isSafe(elbow) ||
           !_isSafe(wrist) ||
           !_isSafe(hip)) {
         feedback = "Body Unclear";
+        formIssues.add("Body Not Visible");
         isProperForm = false;
-        accuracy = 0;
+        // accuracy = 0; // Don't penalize visibility
         return;
       }
-      _processPushUp(shoulder, elbow, wrist, hip);
+      _processPushUp(
+        shoulder,
+        elbow,
+        wrist,
+        hip,
+        knee,
+        ankle,
+        strictLegs: exercise == 'Push-Ups', // Strict only for standard
+      );
     } else if (exercise == 'Squats') {
       if (!_isSafe(hip) || !_isSafe(knee) || !_isSafe(ankle)) {
         feedback = "Legs Unclear";
+        formIssues.add("Legs Not Visible");
         isProperForm = false;
-        accuracy = 0;
+        // accuracy = 0; // Don't penalize visibility
         return;
       }
       _processSquat(shoulder, hip, knee, ankle);
     } else if (exercise == 'Sit-Ups') {
       if (!_isSafe(shoulder) || !_isSafe(hip) || !_isSafe(knee)) {
         feedback = "Body Unclear";
+        formIssues.add("Body Not Visible");
         isProperForm = false;
-        accuracy = 0;
+        // accuracy = 0; // Don't penalize visibility
         return;
       }
       _processSitUp(shoulder, hip, knee);
@@ -98,15 +115,58 @@ class RepCounter {
     Map<String, double> elbow,
     Map<String, double> wrist,
     Map<String, double> hip,
-  ) {
+    Map<String, double> knee,
+    Map<String, double> ankle, {
+    bool strictLegs = true,
+  }) {
+    accuracy = 100; // Start with perfect form assumption
+
+    // 0. Knee Check (prevent box push-ups)
+    // Legs should be straight: Angle Hip-Knee-Ankle ~180
+    final kneeAngle = calculateAngle(hip, knee, ankle);
+    if (strictLegs) {
+      if (kneeAngle < 150) {
+        feedback = "Straighten Knees";
+        isProperForm = false;
+        accuracy = 10;
+        return;
+      }
+    } else {
+      // Box Push-Up Verification: Knees MUST be bent/on floor
+      // If legs are too straight (> 160), they are likely doing a standard push-up or plank
+      if (kneeAngle > 160) {
+        feedback = "Bend Knees";
+        // User request: verification like pushups. If wrong form, don't count.
+        isProperForm = false;
+        accuracy = 10;
+        return;
+      }
+    }
+
+    // 1. Hip Bend Check (Body Alignment)
+    // Shoulder-Hip-Knee should be straight (~180)
+    // Only check for strict forms (Standard Push-Up)
+    if (strictLegs) {
+      final hipAngle = calculateAngle(shoulder, hip, knee);
+      if (hipAngle < 160) {
+        // Allow slight pike/sag but not too much
+        feedback = "Align Hips";
+        formIssues.add("Hips Too Bent");
+        accuracy = min(accuracy, 60); // Penalty
+        // We don't return here, we allow counting but with penalty/feedback
+      }
+    }
+
     if (!_isHorizontal(shoulder, hip)) {
       feedback = "Assume Push-Up Position";
+      formIssues.add("Incorrect Position");
       isProperForm = false;
       accuracy = 10;
       return;
     }
     if (shoulder['y']! >= wrist['y']!) {
       feedback = "Hands Above Shoulders";
+      formIssues.add("Hands Misaligned");
       isProperForm = false;
       accuracy = 30;
       return;
@@ -135,6 +195,8 @@ class RepCounter {
     Map<String, double> knee,
     Map<String, double> ankle,
   ) {
+    accuracy = 100; // Start with perfect form assumption
+
     // 1. Vertical Check (Standing)
     // Shoulder should be roughly above Hip (similar X)
     // Unlike pushups, we want X distance to be small relative to Y distance
@@ -144,6 +206,7 @@ class RepCounter {
     // If dx > dy, they are likely lying down
     if (dx > dy) {
       feedback = "Stand Up";
+      formIssues.add("Improper Squat Form");
       isProperForm = false;
       accuracy = 10;
       return;
@@ -177,6 +240,8 @@ class RepCounter {
     Map<String, double> hip,
     Map<String, double> knee,
   ) {
+    accuracy = 100; // Start with perfect form assumption
+
     // 1. Horizontal Check (Lying Down Context)
     // Unlike squats, we expect significant horizontal displacement when down, but less when up.
     // But mainly we track the angle at the Hip (Shoulder - Hip - Knee)
