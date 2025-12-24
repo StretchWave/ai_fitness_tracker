@@ -107,6 +107,59 @@ class RepCounter {
         return;
       }
       _processSitUp(shoulder, hip, knee);
+    } else if (exercise == 'Pike Push-Ups') {
+      if (!_isSafe(shoulder) ||
+          !_isSafe(elbow) ||
+          !_isSafe(wrist) ||
+          !_isSafe(hip) ||
+          !_isSafe(knee) ||
+          !_isSafe(ankle)) {
+        feedback = "Body Unclear";
+        formIssues.add("Body Not Visible");
+        isProperForm = false;
+        return;
+      }
+      _processPikePushUp(shoulder, elbow, wrist, hip, knee, ankle);
+    } else if (exercise == 'Chair Dips') {
+      if (!_isSafe(shoulder) || !_isSafe(elbow) || !_isSafe(wrist)) {
+        feedback = "Arm Unclear";
+        formIssues.add("Arm Not Visible");
+        isProperForm = false;
+        return;
+      }
+      _processChairDip(shoulder, elbow, wrist, hip, knee, ankle);
+    } else if (exercise == 'Floor Dips') {
+      if (!_isSafe(shoulder) || !_isSafe(elbow) || !_isSafe(wrist)) {
+        feedback = "Arm Unclear";
+        formIssues.add("Arm Not Visible");
+        isProperForm = false;
+        return;
+      }
+      _processFloorDip(shoulder, elbow, wrist);
+    } else if (exercise == 'Bird Dog') {
+      if (!_isSafe(shoulder) ||
+          !_isSafe(elbow) ||
+          !_isSafe(wrist) ||
+          !_isSafe(hip) ||
+          !_isSafe(knee) ||
+          !_isSafe(ankle)) {
+        feedback = "Body Unclear";
+        formIssues.add("Body Not Visible");
+        isProperForm = false;
+        return;
+      }
+      _processBirdDog(shoulder, elbow, wrist, hip, knee, ankle);
+    } else if (exercise == 'Leg Raises') {
+      if (!_isSafe(shoulder) ||
+          !_isSafe(hip) ||
+          !_isSafe(knee) ||
+          !_isSafe(ankle)) {
+        feedback = "Legs Unclear";
+        formIssues.add("Legs Not Visible");
+        isProperForm = false;
+        return;
+      }
+      _processLegRaises(shoulder, hip, knee, ankle);
     }
   }
 
@@ -275,6 +328,216 @@ class RepCounter {
       feedback = "DOWN";
     } else {
       feedback = "KEEP GOING";
+    }
+  }
+
+  void _processPikePushUp(
+    Map<String, double> shoulder,
+    Map<String, double> elbow,
+    Map<String, double> wrist,
+    Map<String, double> hip,
+    Map<String, double> knee,
+    Map<String, double> ankle,
+  ) {
+    accuracy = 100;
+
+    // 1. Knee Check (Legs should be straight)
+    final kneeAngle = calculateAngle(hip, knee, ankle);
+    if (kneeAngle < 150) {
+      feedback = "Straighten Knees";
+      formIssues.add("Bent Knees");
+      isProperForm = false;
+      accuracy = 10;
+      return;
+    }
+
+    // 2. Hip Angle Check (Inverted V)
+    // Shoulder-Hip-Knee angle should be SHARP (bent significantly)
+    // Flat plank is ~180. Pike is < 120 approx.
+    final hipAngle = calculateAngle(shoulder, hip, knee);
+    if (hipAngle > 130) {
+      feedback = "Raise Hips";
+      formIssues.add("Hips Too Low");
+      isProperForm = false;
+      accuracy = 30;
+      return;
+    }
+
+    isProperForm = true;
+
+    // 3. Count Reps (Elbow Angle)
+    final armAngle = calculateAngle(shoulder, elbow, wrist);
+    if (armAngle > 140) {
+      if (_isDown) {
+        count++;
+        _isDown = false;
+      }
+      feedback = "UP";
+    } else if (armAngle < 100) {
+      // Pike might need deeper bend, but 100 is safe start
+      _isDown = true;
+      feedback = "DOWN";
+    } else {
+      feedback = "GO LOWER";
+    }
+  }
+
+  void _processChairDip(
+    Map<String, double> shoulder,
+    Map<String, double> elbow,
+    Map<String, double> wrist,
+    Map<String, double> hip,
+    Map<String, double> knee,
+    Map<String, double> ankle,
+  ) {
+    accuracy = 100;
+
+    // 1. Elevation Check (Hands Higher Than Feet)
+    // Wrist Y should be SMALLER (higher up) than Ankle Y.
+    // If Wrist Y > Ankle Y, hands are below feet.
+    // We add a conservative margin used before, maybe tweak it?
+    // User asked to "try again" with this check. Let's make it simple.
+    // Wrist must be higher (smaller Y) than Ankle - 0.05.
+    if (wrist['y']! > ankle['y']! - 0.05) {
+      feedback = "Use a Chair";
+      formIssues.add("Not Elevated");
+      isProperForm = false;
+      accuracy = 10;
+      return;
+    }
+
+    isProperForm = true;
+
+    final angle = calculateAngle(shoulder, elbow, wrist);
+
+    // Dips:
+    // UP: Arms straight (> 160)
+    // DOWN: Arms bent (< 100)
+
+    if (angle > 160) {
+      if (_isDown) {
+        count++;
+        _isDown = false;
+      }
+      feedback = "UP";
+    } else if (angle < 100) {
+      _isDown = true;
+      feedback = "DOWN";
+    } else {
+      feedback = "GO LOWER";
+    }
+  }
+
+  void _processFloorDip(
+    Map<String, double> shoulder,
+    Map<String, double> elbow,
+    Map<String, double> wrist,
+  ) {
+    // Floor Dip: No elevation check needed.
+    accuracy = 100;
+    isProperForm = true;
+
+    final angle = calculateAngle(shoulder, elbow, wrist);
+
+    if (angle > 160) {
+      if (_isDown) {
+        count++;
+        _isDown = false;
+      }
+      feedback = "UP";
+    } else if (angle < 110) {
+      // Floor dips might have less range
+      _isDown = true;
+      feedback = "DOWN";
+    } else {
+      feedback = "GO LOWER";
+    }
+  }
+
+  void _processBirdDog(
+    Map<String, double> shoulder,
+    Map<String, double> elbow,
+    Map<String, double> wrist,
+    Map<String, double> hip,
+    Map<String, double> knee,
+    Map<String, double> ankle,
+  ) {
+    accuracy = 100;
+    isProperForm = true;
+
+    // Angles
+    final legAngle = calculateAngle(hip, knee, ankle);
+    final armAngle = calculateAngle(shoulder, elbow, wrist);
+
+    // Height Checks (Y coordinate: 0 is top, 1 is bottom)
+    // Lifted means Y should be SMALLER (higher up).
+    // Leg Lifted: Ankle Y should be close to Hip Y or higher.
+    // Arm Lifted: Wrist Y should be close to Shoulder Y or higher.
+    // We add a buffer (0.15 represents ~15% of screen height) to be forgiving.
+    bool isLegLifted = ankle['y']! < hip['y']! + 0.15;
+    bool isLegStraight = legAngle > 150;
+
+    bool isArmLifted = wrist['y']! < shoulder['y']! + 0.15;
+    bool isArmStraight = armAngle > 150;
+
+    // Check for "Extended" state
+    if (isLegStraight && isLegLifted && isArmStraight && isArmLifted) {
+      if (_isDown) {
+        count++;
+        _isDown = false;
+      }
+      feedback = "HOLD";
+    }
+    // Check for "Start" state (All fours / Reset)
+    // Knee bent (< 120) is a good proxy for returning to start.
+    // Or if limbs drop significantly.
+    else if (legAngle < 120 || !isLegLifted) {
+      _isDown = true;
+      feedback = "EXTEND";
+    } else {
+      feedback = "EXTEND";
+    }
+  }
+
+  void _processLegRaises(
+    Map<String, double> shoulder,
+    Map<String, double> hip,
+    Map<String, double> knee,
+    Map<String, double> ankle,
+  ) {
+    accuracy = 100;
+
+    // 1. Straight Legs Check
+    final kneeAngle = calculateAngle(hip, knee, ankle);
+    if (kneeAngle < 140) {
+      feedback = "Straighten Legs";
+      formIssues.add("Bent Knees");
+      isProperForm = false;
+      return;
+    }
+
+    isProperForm = true;
+
+    // 2. Hip Angle (Shoulder - Hip - Knee)
+    // Lying flat: ~180 degrees
+    // Legs Up: < 90 degrees (vertical)
+    final hipAngle = calculateAngle(shoulder, hip, knee);
+
+    // Thresholds
+    // UP: < 110 (Legs raised high enough)
+    // DOWN: > 150 (Legs lowered)
+
+    if (hipAngle < 110) {
+      if (_isDown) {
+        count++;
+        _isDown = false;
+      }
+      feedback = "LOWER";
+    } else if (hipAngle > 150) {
+      _isDown = true;
+      feedback = "LIFT";
+    } else {
+      feedback = _isDown ? "LIFT" : "LOWER";
     }
   }
 

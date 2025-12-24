@@ -44,6 +44,11 @@ class _PoseDemoScreenState extends State<PoseDemoScreen> {
   final List<String> _exercises = [
     'Box Push-Ups',
     'Push-Ups',
+    'Pike Push-Ups',
+    'Chair Dips',
+    'Floor Dips',
+    'Bird Dog',
+    'Leg Raises',
     'Sit-Ups',
     'Squats',
     'Jogging',
@@ -477,6 +482,11 @@ class _PoseDemoScreenState extends State<PoseDemoScreen> {
 
                   if (currentExercise == 'Push-Ups' ||
                       currentExercise == 'Box Push-Ups' ||
+                      currentExercise == 'Pike Push-Ups' ||
+                      currentExercise == 'Chair Dips' ||
+                      currentExercise == 'Floor Dips' ||
+                      currentExercise == 'Bird Dog' ||
+                      currentExercise == 'Leg Raises' ||
                       currentExercise == 'Squats' ||
                       currentExercise == 'Sit-Ups') {
                     _repCounter.processLandmarks(
@@ -630,6 +640,11 @@ class _PoseDemoScreenState extends State<PoseDemoScreen> {
     List<Widget> children = [
       if (currentExercise == 'Push-Ups' ||
           currentExercise == 'Box Push-Ups' ||
+          currentExercise == 'Pike Push-Ups' ||
+          currentExercise == 'Chair Dips' ||
+          currentExercise == 'Floor Dips' ||
+          currentExercise == 'Bird Dog' ||
+          currentExercise == 'Leg Raises' ||
           currentExercise == 'Squats' ||
           currentExercise == 'Sit-Ups') ...[
         // Reps
